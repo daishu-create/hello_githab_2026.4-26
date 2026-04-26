@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>タイマー</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      background: #0f0f0f;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+    }
+
+    .container {
+      text-align: center;
+      padding: 48px 40px;
+      background: #1a1a1a;
+      border-radius: 24px;
+      width: 340px;
+      box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+    }
+
+    #display {
+      font-size: 72px;
+      font-weight: 200;
+      letter-spacing: 4px;
+      font-variant-numeric: tabular-nums;
+      margin-bottom: 40px;
+      transition: color 0.3s;
+    }
+
+    #display.done {
+      color: #ff3b30;
+      animation: pulse 0.6s infinite alternate;
+    }
+
+    @keyframes pulse {
+      from { opacity: 1; }
+      to { opacity: 0.3; }
+    }
+
+    .inputs {
+      display: flex;
+      justify-content: center;
+      gap: 8px;
+      margin-bottom: 32px;
+    }
+
+    .input-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .input-group label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 2px;
+      color: #555;
+    }
+
+    .input-group input {
+      width: 80px;
+      padding: 10px;
+      font-size: 24px;
+      font-weight: 200;
+      text-align: center;
+      background: #252525;
+      border: none;
+      border-radius: 10px;
+      color: #fff;
+      outline: none;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .input-group input:focus {
+      background: #2e2e2e;
+    }
+
+    .buttons {
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      flex: 1;
+      padding: 15px;
+      font-size: 15px;
+      font-weight: 500;
+      border: none;
+      border-radius: 12px;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+    }
+
+    button:active {
+      transform: scale(0.97);
+    }
+
+    #start-btn {
+      background: #fff;
+      color: #0f0f0f;
+    }
+
+    #start-btn:hover { background: #e0e0e0; }
+
+    #start-btn.running {
+      background: #ff9500;
+      color: #fff;
+    }
+
+    #start-btn.running:hover { background: #e08800; }
+
+    #reset-btn {
+      background: #252525;
+      color: #aaa;
+    }
+
+    #reset-btn:hover { background: #2e2e2e; }
+
+    .ring-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(255, 59, 48, 0.12);
+      animation: flash 0.6s infinite alternate;
+      pointer-events: none;
+    }
+
+    .ring-overlay.show { display: block; }
+
+    @keyframes flash {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+  </style>
+</head>
+<body>
+  <div class="ring-overlay" id="ring-overlay"></div>
+
+  <div class="container">
+    <div id="display">00:00</div>
+
+    <div class="inputs">
+      <div class="input-group">
+        <label>時間</label>
+        <input type="number" id="h-input" min="0" max="99" value="0" />
+      </div>
+      <div class="input-group">
+        <label>分</label>
+        <input type="number" id="m-input" min="0" max="59" value="5" />
+      </div>
+      <div class="input-group">
+        <label>秒</label>
+        <input type="number" id="s-input" min="0" max="59" value="0" />
+      </div>
+    </div>
+
+    <div class="buttons">
+      <button id="start-btn" onclick="toggleTimer()">スタート</button>
+      <button id="reset-btn" onclick="resetTimer()">リセット</button>
+    </div>
+  </div>
+
+  <script>
+    let remaining = 0;
+    let interval = null;
+    let running = false;
+    let audioCtx = null;
+    let alarmNodes = [];
+    let alarming = false;
+
+    function pad(n) {
+      return String(n).padStart(2, '0');
+    }
+
+    function updateDisplay(secs) {
+      const h = Math.floor(secs / 3600);
+      const m = Math.floor((secs % 3600) / 60);
+      const s = secs % 60;
+      document.getElementById('display').textContent =
+        h > 0 ? `${pad(h)}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
+    }
+
+    function getInputSeconds() {
+      const h = parseInt(document.getElementById('h-input').value) || 0;
+      const m = parseInt(document.getElementById('m-input').value) || 0;
+      const s = parseInt(document.getElementById('s-input').value) || 0;
+      return h * 3600 + m * 60 + s;
+    }
+
+    function setInputsDisabled(disabled) {
+      ['h-input', 'm-input', 's-input'].forEach(id => {
+        document.getElementById(id).disabled = disabled;
+      });
+    }
+
+    function toggleTimer() {
+      if (alarming) {
+        stopAlarm();
+        return;
+      }
+      if (!running) {
+        startTimer();
+      } else {
+        pauseTimer();
+      }
+    }
+
+    function startTimer() {
+      if (remaining === 0) {
+        remaining = getInputSeconds();
+        if (remaining === 0) return;
+      }
+      running = true;
+      setInputsDisabled(true);
+      document.getElementById('start-btn').textContent = '一時停止';
+      document.getElementById('start-btn').classList.add('running');
+
+      interval = setInterval(() => {
+        remaining--;
+        updateDisplay(remaining);
+        if (remaining <= 0) {
+          clearInterval(interval);
+          running = false;
+          triggerAlarm();
+        }
+      }, 1000);
+    }
+
+    function pauseTimer() {
+      clearInterval(interval);
+      running = false;
+      document.getElementById('start-btn').textContent = 'スタート';
+      document.getElementById('start-btn').classList.remove('running');
+    }
+
+    function resetTimer() {
+      clearInterval(interval);
+      running = false;
+      remaining = 0;
+      stopAlarm();
+      setInputsDisabled(false);
+      const secs = getInputSeconds();
+      updateDisplay(secs);
+      document.getElementById('start-btn').textContent = 'スタート';
+      document.getElementById('start-btn').classList.remove('running');
+      document.getElementById('display').classList.remove('done');
+    }
+
+    function triggerAlarm() {
+      alarming = true;
+      document.getElementById('display').classList.add('done');
+      document.getElementById('ring-overlay').classList.add('show');
+      document.getElementById('start-btn').textContent = '止める';
+      document.getElementById('start-btn').classList.remove('running');
+      playSound();
+    }
+
+    function stopAlarm() {
+      alarming = false;
+      document.getElementById('display').classList.remove('done');
+      document.getElementById('ring-overlay').classList.remove('show');
+      document.getElementById('start-btn').textContent = 'スタート';
+      setInputsDisabled(false);
+      remaining = 0;
+      updateDisplay(getInputSeconds());
+      stopSound();
+    }
+
+    function playSound() {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      function beep() {
+        if (!alarming) return;
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+        osc.frequency.setValueAtTime(1100, audioCtx.currentTime + 0.15);
+        osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.3);
+        gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.6);
+        osc.start(audioCtx.currentTime);
+        osc.stop(audioCtx.currentTime + 0.6);
+        alarmNodes.push(osc);
+        if (alarming) setTimeout(beep, 900);
+      }
+      beep();
+    }
+
+    function stopSound() {
+      alarmNodes.forEach(n => { try { n.stop(); } catch (e) {} });
+      alarmNodes = [];
+      if (audioCtx) { audioCtx.close(); audioCtx = null; }
+    }
+
+    // 入力値が変わったら表示を更新
+    ['h-input', 'm-input', 's-input'].forEach(id => {
+      document.getElementById(id).addEventListener('input', () => {
+        if (!running && !alarming) {
+          remaining = 0;
+          updateDisplay(getInputSeconds());
+        }
+      });
+    });
+
+    updateDisplay(getInputSeconds());
+  </script>
+</body>
+</html>
